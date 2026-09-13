@@ -8,6 +8,9 @@ authors = [
 ]
 requires-python = ">=3.10,<3.13"
 dependencies = [
+    "datasets>=5.0.1",
+    "dotenv>=0.9.9",
+    "tiktoken>=0.14.0",
     "torch>=2.14.0",
     "torchvision>=0.29.0",
 ]

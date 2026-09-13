@@ -4,14 +4,15 @@ import numpy as np
 import tiktoken
 from datasets import load_dataset
 from tqdm import tqdm
+from dotenv import load_dotenv
 
-
+load_dotenv()
 local_dir = "edu_fineweb10B"
 shard_size = int(1e8) # 100 Million tokens per .bin file
 DATA_CACHE_DIR = os.path.join(os.path.dirname(__file__), local_dir)
 os.makedirs(DATA_CACHE_DIR, exist_ok=True)
 
-fw = load_dataset("HuggingFaceFW/fineweb-edu", name="sample-10BT", split="train")
+fw = load_dataset("HuggingFaceFW/fineweb-edu", name="sample-10BT", split="train",)
 
 enc = tiktoken.get_encoding("gpt2")
 eot = enc._special_tokens['<|endoftext|>'] # = 50256
