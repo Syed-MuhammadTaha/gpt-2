@@ -2,10 +2,11 @@ import torch
 import torch.nn.functional as F
 from .model import GPT, GPTConfig
 from .loader import DataLoader
-import torch.optim.lr_scheduler as lr_scheduler
 import math
 
-MAX_STEPS = 19073
+# 500,000 tokens per batch in GPT-2 training / (4 batch size * 1024 context window)
+GRAD_ACCUMULATION_STEPS = 122 
+MAX_STEPS = 19073      # ~1 Epoch of 10B tokens
 WARMUP_STEPS = 715
 MAX_LR = 6e-4
 MIN_LR = MAX_LR * 0.1
@@ -26,43 +27,55 @@ def main():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Training on: {device}")
     
+    torch.set_float32_matmul_precision('high')
+
     config = GPTConfig()
     model = GPT(config)
     model.to(device)
     
+    model = torch.compile(model)
     train_loader = DataLoader(B=4, T=1024, split="train")
     
     optimizer = torch.optim.AdamW(model.parameters(), lr=MAX_LR, betas=(0.9, 0.95), weight_decay=0.0)
-    scheduler = lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
+    
+    for step in range(MAX_STEPS):
 
-    
-    max_steps = 50
-    
-    for step in range(max_steps):
-        x, y = train_loader.next_batch()
-        x, y = x.to(device), y.to(device)
+        accumulated_loss = 0.0
         
         optimizer.zero_grad()
         
-        logits = model(x) # (B, T, V)
-        
-        B, T, C = logits.shape
-        logits_flat = logits.view(B * T, C)
-        y_flat = y.view(B * T)
-        
-        loss = F.cross_entropy(logits_flat, y_flat)
-        
-        loss.backward()
-        
+        for micro_step in range(GRAD_ACCUMULATION_STEPS):
+            
+            x, y = train_loader.next_batch()
+            x, y = x.to(device), y.to(device)
+            with torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16):
+
+                logits = model(x) # (B, T, V)
+            
+                B, T, C = logits.shape
+                logits_flat = logits.view(B * T, C)
+                y_flat = y.view(B * T)
+                
+                loss = F.cross_entropy(logits_flat, y_flat)
+                
+            loss = loss / GRAD_ACCUMULATION_STEPS
+
+            accumulated_loss += loss.item()
+                
+            loss.backward()
+            
 
         lr = get_lr(step)
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = lr
         
-        if step % 10 == 0 or step == MAX_STEPS - 1:
-            print(f"Step {step:05d} | LR: {lr:.6f} | Loss: {loss.item():.4f}")
+        optimizer.param_groups[0]['lr'] = get_lr(step)
+        
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
 
         optimizer.step()
 
+
+        if step % 10 == 0 or step == MAX_STEPS - 1:
+            print(f"Step {step:05d} | LR: {lr:.6f} | Loss: {accumulated_loss.item():.4f}")
+
 if __name__ == "__main__":
-    pass
+    main()
