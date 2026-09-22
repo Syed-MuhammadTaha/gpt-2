@@ -33,7 +33,19 @@ class DataLoader:
 
         x = torch.tensor(buf[:-1].astype(np.int64), dtype=torch.long).view(B, T)
         y = torch.tensor(buf[1:].astype(np.int64), dtype=torch.long).view(B, T)
-        
+
         self.current_position += B * T
-        
+
         return x, y
+
+    def state_dict(self):
+        return {
+            'shard_idx': self.current_shard_idx,
+            'pointer': self.current_position
+        }
+
+    def load_state_dict(self, state):
+        self.current_shard_idx = state['shard_idx']
+        self.current_position = state['pointer']
+
+        self._load_shard()

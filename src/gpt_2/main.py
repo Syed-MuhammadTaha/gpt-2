@@ -1,17 +1,20 @@
 import torch
 import torch.nn.functional as F
-from .model import GPT, GPTConfig
-from .loader import DataLoader
+from model import GPT, GPTConfig
+from loader import DataLoader
 import math
 import os
+import wandb
+import time
 
-# 500,000 tokens per batch in GPT-2 training / (4 batch size * 1024 context window)
-GRAD_ACCUMULATION_STEPS = 122 
+# 500,000 tokens per batch in GPT-2 training / (8 batch size * 1024 context window)
+GRAD_ACCUMULATION_STEPS = 61 
 MAX_STEPS = 19073      # ~1 Epoch of 10B tokens
 WARMUP_STEPS = 715
 MAX_LR = 6e-4
 MIN_LR = MAX_LR * 0.1
 CHECKPOINT_DIR = "checkpoints"
+
 
 def get_lr(it):
     """Cosine learning rate decay with linear warmup."""
@@ -28,6 +31,8 @@ def get_lr(it):
 def main():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Training on: {device}")
+
+    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
     
     torch.set_float32_matmul_precision('high')
 
@@ -36,10 +41,11 @@ def main():
     model.to(device)
     
     model = torch.compile(model)
-    train_loader = DataLoader(B=4, T=1024, split="train")
+    train_loader = DataLoader(B=8, T=1024, split="train")
     
-    optimizer = torch.optim.AdamW(model.parameters(), lr=MAX_LR, betas=(0.9, 0.95), weight_decay=0.0)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=MAX_LR, betas=(0.9, 0.95), weight_decay=0.0, fused=True)
 
+    start_step=0
     ckpt_path = os.path.join(CHECKPOINT_DIR, "latest_ckpt.pt")
 
     if os.path.exists(ckpt_path):
@@ -49,16 +55,19 @@ def main():
         optimizer.load_state_dict(checkpoint['optimizer_state'])
         
         start_step = checkpoint['step'] + 1
-        train_loader.current_position = checkpoint['loader_position']
+        train_loader.load_state_dict(checkpoint['loader_position'])
         print(f"Resuming at Step {start_step}")
 
     wandb.init(project="gpt2-pretraining", name="run-1", resume="allow")
     
     for step in range(start_step, MAX_STEPS):
 
+
         accumulated_loss = 0.0
         
         optimizer.zero_grad()
+
+        t0 = time.time()
         
         for micro_step in range(GRAD_ACCUMULATION_STEPS):
             
@@ -95,15 +104,30 @@ def main():
             "step": step
         })
 
-        if step % 10 == 0 or step == MAX_STEPS - 1:
-            print(f"Step {step:05d} | LR: {lr:.6f} | Loss: {accumulated_loss.item():.4f}")
+        if device == 'cuda':
+            torch.cuda.synchronize()
+            
+        t1 = time.time()
+        dt = t1 - t0
 
+        if step % 10 == 0 or step == MAX_STEPS - 1:
+            print(f"Step {step:05d} | LR: {lr:.6f} | Loss: {accumulated_loss:.4f}")
+
+            if step > 0:
+                # 499,712 tokens divided by the seconds it took
+                tokens_per_sec = (4 * 1024 * GRAD_ACCUMULATION_STEPS) / dt
+                
+                # Seconds per step * remaining steps, converted to hours
+                remaining_hours = (dt * (MAX_STEPS - step)) / 3600
+                
+                print(f"   ---> Speed: {tokens_per_sec:.0f} tokens/sec | Time/Step: {dt:.2f}s | Est. Remaining: {remaining_hours:.2f} hours")
+                
         if step > 0 and step % 50 == 0:
             checkpoint = {
                 'model_state': model.state_dict(),
                 'optimizer_state': optimizer.state_dict(),
                 'step': step,
-                'loader_position': train_loader.current_position 
+                'loader_position': train_loader.state_dict()
             }
             
             temp_path = os.path.join(CHECKPOINT_DIR, "temp_ckpt.pt")
