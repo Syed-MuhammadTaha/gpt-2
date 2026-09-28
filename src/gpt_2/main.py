@@ -6,6 +6,8 @@ import math
 import os
 import wandb
 import time
+import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 # 500,000 tokens per batch in GPT-2 training / (8 batch size * 1024 context window)
 GRAD_ACCUMULATION_STEPS = 61 
@@ -58,7 +60,7 @@ def main():
         train_loader.load_state_dict(checkpoint['loader_position'])
         print(f"Resuming at Step {start_step}")
 
-    wandb.init(project="gpt2-pretraining", name="run-1", resume="allow")
+    wandb.init(project="gpt2-pretraining", name="run-2 (pc restart)", resume="allow", id="7o0jjh1f")
     
     for step in range(start_step, MAX_STEPS):
 
@@ -122,7 +124,7 @@ def main():
                 
                 print(f"   ---> Speed: {tokens_per_sec:.0f} tokens/sec | Time/Step: {dt:.2f}s | Est. Remaining: {remaining_hours:.2f} hours")
                 
-        if step > 0 and step % 50 == 0:
+        if step > 0 and step % 200 == 0:
             checkpoint = {
                 'model_state': model.state_dict(),
                 'optimizer_state': optimizer.state_dict(),
@@ -133,6 +135,8 @@ def main():
             temp_path = os.path.join(CHECKPOINT_DIR, "temp_ckpt.pt")
             torch.save(checkpoint, temp_path)
             os.replace(temp_path, ckpt_path)
+
+            print("saving ckpt....")
 
 if __name__ == "__main__":
     main()
