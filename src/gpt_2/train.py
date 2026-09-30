@@ -30,7 +30,7 @@ def get_lr(it):
     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
     return MIN_LR + coeff * (MAX_LR - MIN_LR)
 
-def main():
+def train():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Training on: {device}")
 
@@ -124,7 +124,7 @@ def main():
                 
                 print(f"   ---> Speed: {tokens_per_sec:.0f} tokens/sec | Time/Step: {dt:.2f}s | Est. Remaining: {remaining_hours:.2f} hours")
                 
-        if step > 0 and step % 200 == 0:
+        if step % 200 == 0 or step == MAX_STEPS:
             checkpoint = {
                 'model_state': model.state_dict(),
                 'optimizer_state': optimizer.state_dict(),
@@ -138,5 +138,5 @@ def main():
 
             print("saving ckpt....")
 
-if __name__ == "__main__":
-    main()
+if __name__ == "__train__":
+    train()
